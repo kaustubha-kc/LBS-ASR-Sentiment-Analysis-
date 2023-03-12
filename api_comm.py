@@ -9,6 +9,7 @@ import numpy as np
 import tensorflow as tf
 from preprocess import *
 from googletrans import Translator
+import json
 
 headers = {'authorization': API_KEY_ASSEMBLYAI}
 #upload
@@ -37,7 +38,7 @@ def upload(filename):
 
 def transcribe(audio_url):
     #transcribe
-    transcript_request = {"audio_url":audio_url,"language_code":"hi"} #,"language_code":"hi"
+    transcript_request = {"audio_url":audio_url,"language_code":"hi"} #,"language_code":"hi","auto_highlights":True
     transcript_response = requests.post(transcript_endpoint,json=transcript_request,headers=headers)
 
     job_id = transcript_response.json()['id']
@@ -63,22 +64,48 @@ def get_transcription_result_url(audio_url):
 
 def save_transcript(audio_url,filename):
     data,error = get_transcription_result_url(audio_url)
-
+    keywords_hindi=["आग","ऐक्सीडेंट","लूट","हृदय अटैक", "स्ट्रोक", "एलर्जी", "मलयामिश्रित शरीरिक घाव", "दुर्घटना","भूकंप", "तूफान",
+                    "टोर्नेडो", "बाढ़","चोरी", "डकैती", "हमला", "हत्या", "बलात्कार", "उत्पीड़न"]
     if data:
         text_filename = filename+".txt"
-        with open(text_filename,"w",encoding="utf-8") as f:
-            f.write(data['text'])
-            translator = Translator()
-            hindi_text = data['text']
-            english_text = translator.translate(hindi_text, dest='en')
-            f.write("\n"+english_text.text)
+        # predict sentiment in english
+        translator = Translator()
+        hindi_text = str(data['text'])
+        english_text = translator.translate(data['text'], dest='en')
+        input = preprocess(english_text.text)
+        arr = cv.transform([input]).toarray()
+        pred = model.predict(arr)
+        a = np.argmax(pred, axis=1)
+        sentiment_prediction = encoder.inverse_transform(a)[0]
 
-            input=preprocess(english_text.text)
-            arr = cv.transform([input]).toarray()
-            pred = model.predict(arr)
-            a=np.argmax(pred,axis=1)
-            prediction = encoder.inverse_transform(a)[0]
-            f.write("\n"+prediction)
+        index = 0
+        emg_nature=""
+        for key in keywords_hindi:
+            if key in hindi_text:
+                emg_nature=key
+                break
+
+        with open(text_filename,"w",encoding="utf-8") as f:
+            # write transcript in txt file in hindi
+            f.write(data['text'])
+            # write transcript in txt file in english
+            f.write("\n" + english_text.text)
+
+            # write sentiment in english
+            f.write("\n"+sentiment_prediction)
+        f.close()
+
+        # the data in json format
+        send_data = {
+            filename: {
+                "nature": emg_nature,
+                "sentiment": sentiment_prediction,
+                "transcript":data['text']
+            }
+        }
+        send_data_json = json.dumps(send_data,ensure_ascii=False)
+
         print('Transcription saved',data)
+        print('\n',send_data_json)
     elif error:
         print("Error!!",error)
